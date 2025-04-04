@@ -6,9 +6,9 @@ from re import compile
 from os import system, name
 from threading import Thread
 from time import sleep
+from fake_useragent import UserAgent
 
 
-user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36"
 REGEX = compile(
     r"(?:^|\D)?(("+ r"(?:[1-9]|[1-9]\d|1\d{2}|2[0-4]\d|25[0-5])"
     + r"\." + r"(?:\d|[1-9]\d|1\d{2}|2[0-4]\d|25[0-5])"
@@ -44,6 +44,7 @@ class Telegram:
         jar = aiohttp.CookieJar(unsafe=True)
         async with aiohttp.ClientSession(cookie_jar=jar, connector=connector) as session:
             try:
+                user_agent = UserAgent().random
                 async with session.get(
                     f'https://t.me/{self.channel}/{self.post}?embed=1&mode=tme', 
                     headers={
@@ -152,7 +153,7 @@ class Auto:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     source_url, 
-                    headers={'user-agent': user_agent}, 
+                    headers={'user-agent': UserAgent().random}, 
                     timeout=aiohttp.ClientTimeout(total=15)
                 ) as response:
                     html = await response.text()
