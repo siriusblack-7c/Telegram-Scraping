@@ -64,3 +64,6 @@ instance/
 
 # Python tool caches
 .cache/
+
+# Program Logs
+error.txt
