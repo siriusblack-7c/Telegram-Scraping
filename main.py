@@ -46,33 +46,40 @@ class Telegram:
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=5),
                     ) as embed_response:
-                        if jar.filter_cookies(embed_response.url).get("stel_ssid"):
-                            views_token = search(
-                                'data-view="([^"]+)"', await embed_response.text()
-                            )
-                            if views_token:
-                                views_response = await session.post(
-                                    "https://t.me/v/?views=" + views_token.group(1),
-                                    headers={
-                                        "referer": f"https://t.me/{self.channel}/{self.post}?embed=1&mode=tme",
-                                        "user-agent": user_agent,
-                                        "x-requested-with": "XMLHttpRequest",
-                                    },
-                                    timeout=aiohttp.ClientTimeout(total=5),
-                                )
-                                if (
-                                    await views_response.text() == "true"
-                                    and views_response.status == 200
-                                ):
-                                    log("SUCCESS: View sent")
-                                else:
-                                    log("FAILED: View not registered")
-                            else:
-                                log("ERROR: No view token found")
-                        else:
+
+                        if not jar.filter_cookies(embed_response.url).get("stel_ssid"):
                             log("ERROR: No cookies received")
+                            return
+
+                        views_token = search(
+                            'data-view="([^"]+)"', await embed_response.text()
+                        )
+
+                        if not views_token:
+                            log("ERROR: No view token found")
+                            return
+
+                        views_response = await session.post(
+                            "https://t.me/v/?views=" + views_token.group(1),
+                            headers={
+                                "referer": f"https://t.me/{self.channel}/{self.post}?embed=1&mode=tme",
+                                "user-agent": user_agent,
+                                "x-requested-with": "XMLHttpRequest",
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5),
+                        )
+
+                        if (
+                            await views_response.text() == "true"
+                            and views_response.status == 200
+                        ):
+                            log("SUCCESS: View sent")
+                        else:
+                            log("FAILED: View not registered")
+
         except Exception as e:
             log(f"ERROR: Proxy connection failed - {proxy_type}://{proxy} - {str(e)[:50]}...")
+
         finally:
             if 'jar' in locals():
                 jar.clear()
@@ -80,10 +87,11 @@ class Telegram:
     async def run_proxies_continuous(self, lines: list, proxy_type: str):
         log(f"Starting continuous mode with {len(lines)} proxies of type {proxy_type}")
         
-        tasks = []
-        for proxy in lines:
-            task = asyncio.create_task(self.continuous_request(proxy, proxy_type))
-            tasks.append(task)
+        tasks = [
+            asyncio.create_task(
+                self.request(proxy, proxy_type)
+            ) for proxy in lines
+        ]
         
         await asyncio.gather(*tasks)
 
@@ -105,10 +113,11 @@ class Telegram:
                 
             log(f"Auto scraping complete. Found {len(auto.proxies)} proxies")
             
-            tasks = []
-            for proxy_type, proxy in auto.proxies:
-                task = asyncio.create_task(self.continuous_request(proxy, proxy_type))
-                tasks.append(task)
+            tasks = [
+                asyncio.create_task(
+                    self.continuous_request(proxy, proxy_type)
+                ) for proxy_type, proxy in auto.proxies
+            ]
             
             try:
                 await asyncio.gather(*tasks)
@@ -119,10 +128,11 @@ class Telegram:
     async def run_rotated_continuous(self, proxy: str, proxy_type: str):
         log(f"Starting continuous rotated mode with proxy {proxy_type}://{proxy}")
         
-        tasks = []
-        for _ in range(self.concurrency * 5):
-            task = asyncio.create_task(self.continuous_request(proxy, proxy_type))
-            tasks.append(task)
+        tasks = [
+            asyncio.create_task(
+                self.continuous_request(proxy, proxy_type)
+            ) for _ in range(self.concurrency * 5)
+        ]
         
         await asyncio.gather(*tasks)
 
@@ -144,7 +154,7 @@ class Auto:
                 
         except FileNotFoundError as e:
             log(f"ERROR: Auto file not found - {str(e)}")
-            exit()
+            exit(0)
         
         log("Starting proxy scraping from sources...")
 
@@ -161,6 +171,7 @@ class Auto:
                     found_proxies = [(proxy_type, match.group(1)) for match in matches]
                     self.proxies.extend(found_proxies)
                     log(f"Found {len(found_proxies)} {proxy_type} proxies from {source_url}")
+
         except Exception as e:
             log(f"ERROR: Failed to scrape from {source_url} - {str(e)[:100]}")
             with open("error.txt", "a", encoding="utf-8", errors="ignore") as f:
@@ -174,32 +185,36 @@ class Auto:
             (self.socks4_sources, "socks4"),
             (self.socks5_sources, "socks5"),
         ]
+
         for sources, proxy_type in sources_list:
             tasks.extend([self.scrap(source_url, proxy_type) for source_url in sources])
+
         await asyncio.gather(*tasks)
         log(f"Proxy scraping complete. Total proxies found: {len(self.proxies)}")
 
 async def main():
     parser = ArgumentParser()
-    parser.add_argument("-c", "--channel", dest="channel", help="Channel user", type=str, required=True)
-    parser.add_argument("-pt", "--post", dest="post", help="Post number", type=int, required=True)
-    parser.add_argument("-t", "--type", dest="type", help="Proxy type", type=str, required=False)
-    parser.add_argument("-m", "--mode", dest="mode", help="Proxy mode", type=str, required=True)
+    parser.add_argument("-c", "--channel", dest="channel", help="Channel user Without @ (e.g: MyChannel1234)", type=str, required=True)
+    parser.add_argument("-pt", "--post", dest="post", help="Post number (ID) (e.g: 1921)", type=int, required=True)
+    parser.add_argument("-t", "--type", dest="type", help="Proxy type (e.g: http)", type=str, required=False)
+    parser.add_argument("-m", "--mode", dest="mode", help="Proxy mode (list | auto | rotate)", type=str, required=True)
     parser.add_argument("-p", "--proxy", dest="proxy", help="Proxy file path or user:password@host:port", type=str, required=False)
     parser.add_argument("-cc", "--concurrency", dest="concurrency", help="Maximum concurrent requests", type=int, default=200)
     args = parser.parse_args()
     
     log(f"Telegram Auto Views started with mode: {args.mode}")
-    api = Telegram(args.channel, args.post, args.concurrency if hasattr(args, 'concurrency') else 200)
+    api = Telegram(args.channel, args.post, args.concurrency)
     
     if args.mode[0] == "l":
         with open(args.proxy, "r") as file:
             lines = file.read().splitlines()
         log(f"Loaded {len(lines)} proxies from file {args.proxy}")
         await api.run_proxies_continuous(lines, args.type)
+
     elif args.mode[0] == "r":
         log(f"Starting rotated mode with single proxy: {args.proxy}")
         await api.run_rotated_continuous(args.proxy, args.type)
+
     else:
         await api.run_auto_continuous()
 
